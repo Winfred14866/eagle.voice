@@ -1,0 +1,308 @@
+<script type="text/javascript">
+        var gk_isXlsx = false;
+        var gk_xlsxFileLookup = {};
+        var gk_fileData = {};
+        function filledCell(cell) {
+          return cell !== '' && cell != null;
+        }
+        function loadFileData(filename) {
+        if (gk_isXlsx && gk_xlsxFileLookup[filename]) {
+            try {
+                var workbook = XLSX.read(gk_fileData[filename], { type: 'base64' });
+                var firstSheetName = workbook.SheetNames[0];
+                var worksheet = workbook.Sheets[firstSheetName];
+
+                // Convert sheet to JSON to filter blank rows
+                var jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, blankrows: false, defval: '' });
+                // Filter out blank rows (rows where all cells are empty, null, or undefined)
+                var filteredData = jsonData.filter(row => row.some(filledCell));
+
+                // Heuristic to find the header row by ignoring rows with fewer filled cells than the next row
+                var headerRowIndex = filteredData.findIndex((row, index) =>
+                  row.filter(filledCell).length >= filteredData[index + 1]?.filter(filledCell).length
+                );
+                // Fallback
+                if (headerRowIndex === -1 || headerRowIndex > 25) {
+                  headerRowIndex = 0;
+                }
+
+                // Convert filtered JSON back to CSV
+                var csv = XLSX.utils.aoa_to_sheet(filteredData.slice(headerRowIndex)); // Create a new sheet from filtered array of arrays
+                csv = XLSX.utils.sheet_to_csv(csv, { header: 1 });
+                return csv;
+            } catch (e) {
+                console.error(e);
+                return "";
+            }
+        }
+        return gk_fileData[filename] || "";
+        }
+        </script><!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Eagle Voice App - Real-time gunshot detection by ProsFire Technologies">
+  <meta name="keywords" content="gunshot detection, real-time alerts, police tech, AI">
+  <title>Eagle Voice App</title>
+  <link rel="icon" type="image/x-icon" href="/favicon.ico">
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    .alert-card {
+      animation: fadeIn 0.5s ease-in;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to { opacity: 1; }
+    }
+    .dark-mode {
+      background-color: #1f2937;
+      color: #f9fafb;
+    }
+    .dark-mode .alert-card {
+      background-color: #374151;
+      color: #f9fafb;
+    }
+    .dark-mode .border {
+      border-color: #4b5563;
+    }
+  </style>
+</head>
+<body class="bg-gray-100 font-sans">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const EagleVoiceApp = () => {
+      const [alerts, setAlerts] = useState([]);
+      const [shotCount, setShotCount] = useState(0);
+      const [direction, setDirection] = useState(null);
+      const [distance, setDistance] = useState(null);
+      const [name, setName] = useState('');
+      const [email, setEmail] = useState('');
+      const [organization, setOrganization] = useState('');
+      const [rsvpSuccess, setRsvpSuccess] = useState(false);
+      const [filterStatus, setFilterStatus] = useState('All');
+      const [isDarkMode, setIsDarkMode] = useState(false);
+      const [playAudio, setPlayAudio] = useState(true);
+
+      useEffect(() => {
+        const fetchAlerts = async () => {
+          try {
+            const response = await fetch("https://mock-api.prosfiretech.com/alerts", {
+              method: "GET",
+              headers: { "Content-Type": "application/json" },
+            });
+            const data = await response.json();
+            const newAlerts = data.alerts || [];
+            setAlerts(prevAlerts => [...prevAlerts, ...newAlerts]);
+            newAlerts.forEach(alert => {
+              setShotCount(prev => prev + alert.shotCount);
+              setDirection(alert.direction || "Unknown");
+              setDistance(alert.distance || "Unknown");
+              const storedAlerts = JSON.parse(localStorage.getItem("eagleAlerts") || "[]");
+              storedAlerts.push(alert);
+              localStorage.setItem("eagleAlerts", JSON.stringify(storedAlerts));
+            });
+          } catch (error) {
+            console.error("Error fetching alerts:", error);
+          }
+        };
+        fetchAlerts();
+        const interval = setInterval(fetchAlerts, 10000);
+        return () => clearInterval(interval);
+      }, []);
+
+      const handleRsvpSubmit = async (e) => {
+        e.preventDefault();
+        try {
+          const response = await fetch("https://mock-api.prosfiretech.com/rsvp", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name, email, organization }),
+          });
+          const data = await response.json();
+          if (data.success) {
+            setRsvpSuccess(true);
+            alert("RSVP submitted successfully!");
+            setName('');
+            setEmail('');
+            setOrganization('');
+          } else {
+            alert("Error submitting RSVP. Please try again.");
+          }
+        } catch (error) {
+          alert("Error submitting RSVP. Please try again.");
+        }
+      };
+
+      const handleExportAlerts = () => {
+        const dataStr = JSON.stringify(alerts, null, 2);
+        const blob = new Blob([dataStr], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "eagle_alerts.json";
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+      };
+
+      const toggleDarkMode = () => {
+        setIsDarkMode(!isDarkMode);
+      };
+
+      const filteredAlerts = filterStatus === 'All' 
+        ? alerts 
+        : alerts.filter(alert => alert.status === filterStatus);
+
+      return (
+        <div className={isDarkMode ? "dark-mode container mx-auto p-4" : "container mx-auto p-4"}>
+          <h1 className="text-3xl font-bold text-blue-800 mb-4">Eagle Voice App</h1>
+          <p className="text-lg mb-4">Real-time gunshot detection for police response.</p>
+          
+          <div className="mb-6">
+            <img 
+              src="https://upload.wikimedia.org/wikipedia/commons/7/7c/USA_San_Francisco_location_map.svg" 
+              alt="Map Placeholder" 
+              className="w-full h-96 object-cover rounded-lg"
+            />
+            <p className="text-sm text-gray-500 mt-2">Static map placeholder (San Francisco)</p>
+          </div>
+
+          <div className="flex justify-between mb-4">
+            <div>
+              <label className="mr-2">Filter Alerts:</label>
+              <select 
+                value={filterStatus} 
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="p-2 rounded border"
+              >
+                <option value="All">All</option>
+                <option value="Detected">Detected</option>
+                <option value="Confirmed">Confirmed</option>
+              </select>
+            </div>
+            <div className="flex gap-2">
+              <button 
+                onClick={toggleDarkMode}
+                className="bg-gray-600 text-white px-4 py-2 rounded-full hover:bg-gray-700"
+              >
+                {isDarkMode ? "Light Mode" : "Dark Mode"}
+              </button>
+              <button 
+                onClick={handleExportAlerts}
+                className="bg-green-600 text-white px-4 py-2 rounded-full hover:bg-green-700"
+              >
+                Export Alerts
+              </button>
+              <button 
+                onClick={() => setPlayAudio(!playAudio)}
+                className="bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700"
+              >
+                {playAudio ? "Disable Audio" : "Enable Audio"}
+              </button>
+            </div>
+          </div>
+
+          <div className="mb-4">
+            <p><strong>Total Shots Fired:</strong> {shotCount}</p>
+            <p><strong>Estimated Direction:</strong> {direction}</p>
+            <p><strong>Estimated Distance:</strong> {distance} meters</p>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {filteredAlerts.map((alert, index) => (
+              <div key={index} className="alert-card bg-white p-4 rounded-lg shadow-md">
+                <p><strong>Time:</strong> {alert.timestamp}</p>
+                <p><strong>Location:</strong> {alert.lat}, {alert.lng}</p>
+                <p><strong>Status:</strong> {alert.status}</p>
+                <p><strong>Shots Fired:</strong> {alert.shotCount}</p>
+                <p><strong>Direction:</strong> {alert.direction || "Unknown"}</p>
+                <p><strong>Distance:</strong> {alert.distance || "Unknown"} meters</p>
+                {playAudio && (
+                  <audio controls src={alert.audioSnippet || ""} className="mt-2 w-full">
+                    Your browser does not support the audio element.
+                  </audio>
+                )}
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-8">
+            <h2 className="text-2xl font-bold mb-4">RSVP for Demo Day</h2>
+            <form onSubmit={handleRsvpSubmit}>
+              <input 
+                type="text" 
+                placeholder="Name" 
+                value={name} 
+                onChange={(e) => setName(e.target.value)} 
+                required 
+                className="w-full p-2 mb-2 rounded border" 
+              />
+              <input 
+                type="email" 
+                placeholder="Email" 
+                value={email} 
+                onChange={(e) => setEmail(e.target.value)} 
+                required 
+                className="w-full p-2 mb-2 rounded border" 
+              />
+              <input 
+                type="text" 
+                placeholder="Organization" 
+                value={organization} 
+                onChange={(e) => setOrganization(e.target.value)} 
+                required 
+                className="w-full p-2 mb-2 rounded border" 
+              />
+              <button 
+                type="submit" 
+                className="w-full bg-blue-600 text-white px-4 py-2 rounded-full hover:bg-blue-700"
+              >
+                Submit RSVP
+              </button>
+            </form>
+            {rsvpSuccess && <p className="mt-2 text-green-600">RSVP success! We'll see you on Nov 25.</p>}
+          </div>
+        </div>
+      );
+    };
+
+    // Mock data for alerts with enhanced features
+    const mockAlerts = [
+      { lat: 37.7749, lng: -122.4194, timestamp: "2025-08-29T00:00:00Z", status: "Detected", shotCount: 3, direction: "North-East", distance: 150, audioSnippet: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-1.mp3" },
+      { lat: 37.7849, lng: -122.4094, timestamp: "2025-08-29T00:05:00Z", status: "Confirmed", shotCount: 1, direction: "South-West", distance: 300, audioSnippet: "https://www.soundhelix.com/examples/mp3/SoundHelix-Song-2.mp3" },
+    ];
+
+    // Mock API responses
+    const mockApi = async (url, options) => {
+      if (url === "https://mock-api.prosfiretech.com/alerts") {
+        return { json: async () => ({ alerts: mockAlerts }) };
+      }
+      if (url === "https://mock-api.prosfiretech.com/rsvp") {
+        return { json: async () => ({ success: true }) };
+      }
+      throw new Error("Not Found");
+    };
+
+    // Override fetch to use mock for our URLs
+    const originalFetch = window.fetch;
+    window.fetch = async (url, options) => {
+      if (url.startsWith("https://mock-api.prosfiretech.com")) {
+        return mockApi(url, options);
+      }
+      return originalFetch(url, options);
+    };
+
+    // Render the app
+    const root = document.getElementById("root");
+    ReactDOM.render(<EagleVoiceApp />, root);
+  </script>
+</body>
+</html>
